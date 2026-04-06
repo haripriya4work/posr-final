@@ -1,0 +1,17 @@
+{
+  "name": "posr-enhanced",
+  "version": "2.0.0",
+  "description": "Multi-Dimensional Proof-of-Stake with Reputation for Indian Stock Exchange",
+  "scripts": {
+    "compile":    "hardhat compile",
+    "node":       "hardhat node",
+    "deploy":     "hardhat run scripts/deploy.js --network localhost",
+    "simulate":   "node scripts/simulation.js",
+    "analyse":    "node scripts/analysis.js",
+    "test":       "hardhat test"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^4.0.0",
+    "hardhat": "^2.19.0"
+  }
+}
