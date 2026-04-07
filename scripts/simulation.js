@@ -33,6 +33,33 @@ const PROFILES = [
 const rand  = (mn,mx) => Math.floor(Math.random()*(mx-mn+1))+mn;
 const randF = () => Math.random();
 
+let overheadStats = {
+  selectionTime: [],
+  updateTime: [],
+  totalStart: 0,
+  totalEnd: 0
+};
+
+let gasStats = {
+  selectionGas: 0,
+  updateGas: 0,
+  verifyGas: 0,
+  totalGas: 0
+};
+
+function estimateGas(operation, complexityFactor = 1) {
+  switch(operation) {
+    case "selection":
+      return 50000 * complexityFactor; // loop over validators
+    case "update":
+      return 80000 * complexityFactor; // heavy logic
+    case "verify":
+      return 120000; // transaction cost
+    default:
+      return 0;
+  }
+}
+
 function gini(arr) {
   const n=arr.length, s=arr.reduce((a,b)=>a+b,0);
   if(s===0) return 0;
@@ -43,7 +70,8 @@ function gini(arr) {
 }
 
 function composite(v) {
-  return 0.35*v.R_acc + 0.25*v.R_lat + 0.25*v.R_intg + 0.10*v.R_comp + 0.05*v.R_cons;
+  const raw = 0.35*v.R_acc + 0.25*v.R_lat + 0.25*v.R_intg + 0.10*v.R_comp + 0.05*v.R_cons;
+  return raw / 100; // normalized (0–1)
 }
 
 function mkValidators() {
@@ -67,8 +95,8 @@ function score(v, mode) {
   // This prevents ultra-rich validators from getting 100% probability
   const S = Math.min(Math.log2(v.stake+1)/Math.log2(11)*100, 100);
   if(mode===0) return S;
-  const R = mode===1 ? v.reputation : composite(v);
-  let w = 0.75*S + 0.25*R;
+  const R = mode===1 ? (v.reputation / 100) : composite(v);
+  let w = 0.75*(S/100) + 0.25*R;
   if(mode>=1 && v.successStreak>=3) w*=1.10;
   if(mode===2 && v.R_comp>=80)      w*=1.20;
   return Math.max(0,w);
@@ -87,6 +115,19 @@ function pickValidator(vs, mode) {
 }
 
 function runMode(mode) {
+  gasStats = {
+    selectionGas: 0,
+    updateGas: 0,
+    verifyGas: 0,
+    totalGas: 0
+  };
+  overheadStats = {
+    selectionTime: [],
+    updateTime: [],
+    totalStart: 0,
+    totalEnd: 0
+  };
+  overheadStats.totalStart = Date.now();
   const labels=["Plain PoS","Basic PoS-R","Multi-dim PoS-R"];
   const lbl=labels[mode];
   console.log(`\n${"─".repeat(62)}`);
@@ -100,7 +141,18 @@ function runMode(mode) {
     // Heera stake shock
     if(t===5000){ const h=vs.find(v=>v.name==="Heera"); if(h) h.stake=Math.round(h.stakeOrig*0.5); }
 
-    const val=pickValidator(vs,mode);
+    const selStart = process.hrtime.bigint();
+    const val = pickValidator(vs, mode);
+
+    const selectionGas = estimateGas("selection", vs.length);
+    gasStats.selectionGas += selectionGas;
+    gasStats.totalGas += selectionGas;
+
+    const selEnd = process.hrtime.bigint();
+    // convert nanoseconds → milliseconds
+    const selTime = Number(selEnd - selStart) / 1e6;
+    overheadStats.selectionTime.push(selTime);
+
     if(!val) break;
     val.selectionCount++;
 
@@ -111,10 +163,18 @@ function runMode(mode) {
     if(val.malicious&&roll>val.honest){ success=false; sev=2; }
     else if(val.lazy&&roll>val.honest){ success=false; sev=1; }
     else if(roll>val.honest)          { success=false; sev=0; }
+
+    // 🔥 Verification gas (after outcome is decided)
+    const verifyGas = estimateGas("verify");
+    gasStats.verifyGas += verifyGas;
+    gasStats.totalGas += verifyGas;
+
     const tId=val.colluder?0:rand(0,TRADERS_COUNT-1);
 
     val.totalVerif++;
     val.traderFreq[tId]=(val.traderFreq[tId]||0)+1;
+
+    const updStart = process.hrtime.bigint();
 
     if(mode===0) { /* Plain PoS — no update */ }
 
@@ -137,7 +197,11 @@ function runMode(mode) {
         const pen=sev===1?3:sev===2?15:5;
         val.R_acc=Math.max(0,val.R_acc-pen);
         val.failureStreak++; val.successStreak=0;
-        if(sev===2){ val.slashed=true; val.active=false; if(!val.detectedAt) val.detectedAt=t; val.R_acc=0; continue; }
+        if(sev===2){ val.slashed=true; val.active=false; if(!val.detectedAt) val.detectedAt=t; val.R_acc=0; 
+            const updateGas = estimateGas("update", val.totalVerif + 1);
+            gasStats.updateGas += updateGas;
+            gasStats.totalGas += updateGas;
+          continue; }
       }
       // R_latency
       const ld=lat<=2?3:lat<=5?1:lat<=15?0:lat<=30?-2:-5;
@@ -154,6 +218,14 @@ function runMode(mode) {
       else if(rp>=80) val.R_cons=Math.max(0,val.R_cons-2);
       else val.R_cons=Math.max(0,val.R_cons-5);
     }
+    const updEnd = process.hrtime.bigint();
+    const updTime = Number(updEnd - updStart) / 1e6;
+    overheadStats.updateTime.push(updTime);
+
+    // 🔥 Update gas for normal flow
+    const updateGas = estimateGas("update", val.totalVerif + 1);
+    gasStats.updateGas += updateGas;
+    gasStats.totalGas += updateGas;
 
     if(t%SNAPSHOT_EVERY===0){
       const sel=vs.map(v=>v.selectionCount);
@@ -183,6 +255,21 @@ function runMode(mode) {
   console.log(`  Final Gini: ${fg.toFixed(4)} | Top: ${top.name} (${(top.selectionCount/TOTAL_TRADES*100).toFixed(1)}%)`);
   console.log(`  Eve: #${eD||"Never"} | Charlie: #${cD||"Never"} | Dave: #${dD||"Never"}`);
 
+  overheadStats.totalEnd = Date.now();
+
+  const avgSelectionTime =
+    overheadStats.selectionTime.reduce((a,b)=>a+b,0) /
+    overheadStats.selectionTime.length;
+  const avgUpdateTime =
+    overheadStats.updateTime.reduce((a,b)=>a+b,0) /
+    overheadStats.updateTime.length;
+  const totalExecutionTime =
+    (overheadStats.totalEnd - overheadStats.totalStart);
+
+  const avgSelectionGas = gasStats.selectionGas / TOTAL_TRADES;
+  const avgUpdateGas = gasStats.updateGas / TOTAL_TRADES;
+  const avgVerifyGas = gasStats.verifyGas / TOTAL_TRADES;
+
   return {
     mode:lbl, snapshots:snaps,
     finalStats:vs.map(v=>({
@@ -193,6 +280,20 @@ function runMode(mode) {
       subScores:mode===2?{R_accuracy:v.R_acc,R_latency:v.R_lat,R_integrity:v.R_intg,R_compliance:v.R_comp,R_consistency:v.R_cons}:null,
     })),
     summary:{finalGini:parseFloat(fg.toFixed(4)),eveDetectedAt:eD,charlieDetectedAt:cD,daveDetectedAt:dD,totalTrades:TOTAL_TRADES},
+    overhead: {
+      avgSelectionTimeMs: parseFloat(avgSelectionTime.toFixed(6)),
+      avgUpdateTimeMs: parseFloat(avgUpdateTime.toFixed(6)),
+      totalExecutionTimeMs: totalExecutionTime
+    },
+    gas: {
+      totalGas: gasStats.totalGas,
+      selectionGas: gasStats.selectionGas,
+      updateGas: gasStats.updateGas,
+      verifyGas: gasStats.verifyGas,
+      avgSelectionGas: Math.round(avgSelectionGas),
+      avgUpdateGas: Math.round(avgUpdateGas),
+      avgVerifyGas: Math.round(avgVerifyGas)
+    }
   };
 }
 
