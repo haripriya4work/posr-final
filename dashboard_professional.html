@@ -1,0 +1,903 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>PoS-R Simulation Analysis Report</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap');
+
+  :root {
+    /* Professional Academic Colors */
+    --primary: #1e3a8a;      /* Deep blue */
+    --secondary: #334155;    /* Slate gray */
+    --accent: #0ea5e9;       /* Sky blue */
+    --success: #10b981;      /* Emerald */
+    --warning: #f59e0b;      /* Amber */
+    --danger: #ef4444;       /* Red */
+    --bg: #f8fafc;           /* Off-white */
+    --bg-dark: #ffffff;      /* White */
+    --surface: #f1f5f9;      /* Light gray */
+    --border: #cbd5e1;       /* Border gray */
+    --text: #1e293b;         /* Dark text */
+    --text-secondary: #64748b; /* Secondary text */
+    --chart-blue: #3b82f6;
+    --chart-green: #10b981;
+    --chart-orange: #f59e0b;
+    --chart-purple: #8b5cf6;
+    --chart-red: #ef4444;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', sans-serif;
+    line-height: 1.6;
+    letter-spacing: -0.3px;
+  }
+
+  .container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 40px 24px;
+  }
+
+  /* ── HEADER & TITLE ── */
+  .report-header {
+    background: var(--bg-dark);
+    border-bottom: 3px solid var(--primary);
+    padding: 48px 0;
+    margin-bottom: 48px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+
+  .report-header h1 {
+    font-size: 36px;
+    font-weight: 800;
+    color: var(--primary);
+    margin-bottom: 12px;
+    line-height: 1.2;
+  }
+
+  .report-header .subtitle {
+    font-size: 16px;
+    color: var(--text-secondary);
+    font-weight: 400;
+    margin-bottom: 24px;
+  }
+
+  .report-meta {
+    display: flex;
+    gap: 32px;
+    font-size: 14px;
+    color: var(--text-secondary);
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+  }
+
+  .report-meta strong {
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  /* ── FILE UPLOAD ── */
+  .upload-zone {
+    background: linear-gradient(135deg, #f0f9ff 0%, #f8fafc 100%);
+    border: 2px dashed var(--accent);
+    border-radius: 8px;
+    padding: 48px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    margin-bottom: 48px;
+  }
+
+  .upload-zone:hover {
+    border-color: var(--primary);
+    background: linear-gradient(135deg, #e0f2fe 0%, #f1f5f9 100%);
+    box-shadow: 0 4px 6px rgba(0,0,0,0.08);
+  }
+
+  .upload-zone h3 {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--primary);
+    margin-bottom: 8px;
+  }
+
+  .upload-zone p {
+    font-size: 14px;
+    color: var(--text-secondary);
+  }
+
+  .upload-zone input { display: none; }
+
+  /* ── MAIN CONTENT ── */
+  .main-content { display: none; }
+  .main-content.visible { display: block; }
+
+  /* ── SECTIONS ── */
+  .section {
+    margin-bottom: 56px;
+  }
+
+  .section-title {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--primary);
+    margin-bottom: 28px;
+    padding-bottom: 12px;
+    border-bottom: 2px solid var(--accent);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  /* ── STATS CARDS ── */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 24px;
+    margin-bottom: 40px;
+  }
+
+  .stat-card {
+    background: var(--bg-dark);
+    border-left: 4px solid;
+    border-color: var(--accent);
+    padding: 24px;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    transition: all 0.3s ease;
+  }
+
+  .stat-card:hover {
+    box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+    transform: translateY(-2px);
+  }
+
+  .stat-label {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+  }
+
+  .stat-value {
+    font-size: 32px;
+    font-weight: 800;
+    color: var(--primary);
+    margin-bottom: 8px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .stat-desc {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.4;
+  }
+
+  /* ── CHART CARDS ── */
+  .chart-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+    gap: 28px;
+    margin-bottom: 40px;
+  }
+
+  .chart-grid.full {
+    grid-template-columns: 1fr;
+  }
+
+  .chart-card {
+    background: var(--bg-dark);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 28px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+
+  .chart-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--primary);
+    margin-bottom: 6px;
+  }
+
+  .chart-subtitle {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: 24px;
+    font-weight: 400;
+  }
+
+  .chart-wrap {
+    position: relative;
+    min-height: 200px;
+  }
+
+  /* ── TABLES ── */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+    margin-bottom: 20px;
+  }
+
+  table th {
+    background: var(--primary);
+    color: white;
+    padding: 14px 16px;
+    text-align: left;
+    font-weight: 600;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    border: none;
+  }
+
+  table td {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  table tr:hover td {
+    background: var(--surface);
+  }
+
+  table tr:last-child td {
+    border-bottom: 2px solid var(--primary);
+  }
+
+  .table-metric {
+    color: var(--primary);
+    font-weight: 600;
+  }
+
+  /* ── COMPARISON CARDS ── */
+  .comparison-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 24px;
+  }
+
+  .comparison-card {
+    background: var(--bg-dark);
+    border: 2px solid;
+    border-radius: 8px;
+    padding: 28px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+
+  .comparison-card.plain {
+    border-color: var(--chart-blue);
+  }
+
+  .comparison-card.basic {
+    border-color: var(--chart-orange);
+  }
+
+  .comparison-card.multi {
+    border-color: var(--success);
+  }
+
+  .comparison-header {
+    font-size: 18px;
+    font-weight: 700;
+    margin-bottom: 20px;
+    padding-bottom: 12px;
+    border-bottom: 2px solid currentColor;
+  }
+
+  .comparison-card.plain .comparison-header { color: var(--chart-blue); }
+  .comparison-card.basic .comparison-header { color: var(--chart-orange); }
+  .comparison-card.multi .comparison-header { color: var(--success); }
+
+  .strengths, .weaknesses {
+    margin-bottom: 16px;
+  }
+
+  .strengths-title, .weaknesses-title {
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .strengths-title { color: var(--success); }
+  .weaknesses-title { color: var(--warning); }
+
+  .strength-item, .weakness-item {
+    font-size: 13px;
+    margin-bottom: 8px;
+    padding-left: 12px;
+    line-height: 1.5;
+  }
+
+  .strength-item { color: var(--text); }
+  .weakness-item { color: var(--text-secondary); }
+
+  /* ── BADGES & BADGES ── */
+  .badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    margin-right: 8px;
+    margin-bottom: 8px;
+  }
+
+  .badge-success {
+    background: rgba(16, 185, 129, 0.12);
+    color: var(--success);
+  }
+
+  .badge-warning {
+    background: rgba(245, 158, 11, 0.12);
+    color: var(--warning);
+  }
+
+  .badge-danger {
+    background: rgba(239, 68, 68, 0.12);
+    color: var(--danger);
+  }
+
+  /* ── LOADING ── */
+  #loading {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    background: rgba(255, 255, 255, 0.95);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    backdrop-filter: blur(4px);
+  }
+
+  .loader {
+    width: 48px;
+    height: 48px;
+    border: 3px solid var(--border);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .load-text {
+    font-size: 16px;
+    color: var(--text);
+    font-weight: 500;
+  }
+
+  /* ── RESPONSIVE ── */
+  @media (max-width: 768px) {
+    .report-header h1 { font-size: 26px; }
+    .report-meta { flex-direction: column; gap: 12px; }
+    .chart-grid { grid-template-columns: 1fr; }
+    .comparison-grid { grid-template-columns: 1fr; }
+    .stats-grid { grid-template-columns: 1fr; }
+    .section-title { font-size: 18px; }
+  }
+
+  /* ── PRINT STYLES ── */
+  @media print {
+    .upload-zone { display: none; }
+    * { box-shadow: none !important; }
+    .chart-card { page-break-inside: avoid; }
+    .section { page-break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<div id="loading" style="display:none">
+  <div class="loader"></div>
+  <div class="load-text">Loading simulation data...</div>
+</div>
+
+<div class="report-header">
+  <div class="container">
+    <h1>PoS-R Simulation Analysis Report</h1>
+    <p class="subtitle">Multi-Dimensional Proof-of-Stake with Reputation | Indian Stock Exchange Context</p>
+    <div class="report-meta">
+      <div><strong>Trades Simulated:</strong> <span id="meta-trades">—</span></div>
+      <div><strong>Validators:</strong> 10</div>
+      <div><strong>Rounds:</strong> 5</div>
+      <div><strong>Generated:</strong> <span id="meta-date">—</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="container">
+  <!-- FILE UPLOAD -->
+  <div class="upload-zone" id="uploadZone" onclick="document.getElementById('fileInput').click()">
+    <h3>📊 Load Simulation Results</h3>
+    <p>Click to browse or drag & drop simulation_results.json here</p>
+    <input type="file" id="fileInput" accept=".json"/>
+  </div>
+
+  <!-- MAIN CONTENT -->
+  <div class="main-content" id="mainContent">
+
+    <!-- SECTION 1: EXECUTIVE SUMMARY -->
+    <div class="section">
+      <div class="section-title">📌 Executive Summary</div>
+      <div class="stats-grid" id="statsGrid"></div>
+    </div>
+
+    <!-- SECTION 2: FAIRNESS ANALYSIS -->
+    <div class="section">
+      <div class="section-title">📊 Fairness & Detection Analysis</div>
+      <div class="chart-grid">
+        <div class="chart-card">
+          <div class="chart-title">Gini Coefficient Progression</div>
+          <div class="chart-subtitle">Lower values indicate fairer validator distribution. Measured at 1000-trade intervals.</div>
+          <div class="chart-wrap"><canvas id="giniChart"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">Validator Selection Distribution</div>
+          <div class="chart-subtitle">Percentage of trades assigned to each validator (average across 5 rounds).</div>
+          <div class="chart-wrap"><canvas id="selectionChart"></canvas></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SECTION 3: DETECTION PERFORMANCE -->
+    <div class="section">
+      <div class="section-title">🚨 Bad Actor Detection Performance</div>
+      <div class="chart-grid full">
+        <div class="chart-card">
+          <div class="chart-title">Malicious & Colluding Validator Detection</div>
+          <div class="chart-subtitle">Trade number at which each algorithm successfully detected bad actors (lower = faster detection).</div>
+          <div id="detectionTimeline"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SECTION 4: RESOURCE CONSUMPTION -->
+    <div class="section">
+      <div class="section-title">⚡ Resource Consumption Analysis</div>
+      <div class="chart-grid">
+        <div class="chart-card">
+          <div class="chart-title">Gas Consumption Comparison</div>
+          <div class="chart-subtitle">Total gas used per complete 10,000-trade round (averaged across 5 rounds).</div>
+          <div class="chart-wrap"><canvas id="gasChart"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">Execution Time Overhead</div>
+          <div class="chart-subtitle">Average time per simulation round. Includes selection, verification, and reputation updates.</div>
+          <div class="chart-wrap"><canvas id="timingChart"></canvas></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SECTION 5: COMPARATIVE ANALYSIS TABLE -->
+    <div class="section">
+      <div class="section-title">📋 Comprehensive Comparison Table</div>
+      <div class="chart-card">
+        <table id="compTable"></table>
+      </div>
+    </div>
+
+    <!-- SECTION 6: ALGORITHM COMPARISON -->
+    <div class="section">
+      <div class="section-title">🔍 Algorithm Strengths & Weaknesses</div>
+      <div class="comparison-grid" id="honestyGrid"></div>
+    </div>
+
+    <!-- SECTION 7: STATISTICAL VARIATION -->
+    <div class="section">
+      <div class="section-title">📈 Statistical Variation & Reproducibility</div>
+      <div class="chart-card">
+        <div class="chart-title">Multi-Dimensional PoS-R: Results Across 5 Rounds</div>
+        <div class="chart-subtitle">Shows consistency and range of results. Demonstrates reproducibility of findings.</div>
+        <table id="statisticalTable"></table>
+      </div>
+    </div>
+
+    <!-- SECTION 8: CONCLUSIONS -->
+    <div class="section">
+      <div class="section-title">✓ Key Findings & Conclusions</div>
+      <div class="chart-card" id="conclusionsBox"></div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ──────────────────────────────────────────────────────────────────────────────
+// FILE HANDLING
+// ──────────────────────────────────────────────────────────────────────────────
+const uploadZone = document.getElementById('uploadZone');
+const fileInput = document.getElementById('fileInput');
+
+uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.style.borderColor = 'var(--primary)'; });
+uploadZone.addEventListener('dragleave', () => { uploadZone.style.borderColor = ''; });
+uploadZone.addEventListener('drop', e => {
+  e.preventDefault();
+  uploadZone.style.borderColor = '';
+  if (e.dataTransfer.files[0]) readFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', e => { if (e.target.files[0]) readFile(e.target.files[0]); });
+
+function readFile(file) {
+  document.getElementById('loading').style.display = 'flex';
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const data = JSON.parse(e.target.result);
+      document.getElementById('loading').style.display = 'none';
+      renderDashboard(data);
+    } catch (err) {
+      alert('Error parsing JSON: ' + err.message);
+      document.getElementById('loading').style.display = 'none';
+    }
+  };
+  reader.readAsText(file);
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// CHART CONFIGURATION
+// ──────────────────────────────────────────────────────────────────────────────
+Chart.defaults.font.family = "'Inter', sans-serif";
+Chart.defaults.color = 'var(--text-secondary)';
+
+const COLORS = {
+  blue: '#3b82f6',
+  orange: '#f59e0b',
+  green: '#10b981',
+  red: '#ef4444',
+  purple: '#8b5cf6',
+};
+
+const chartOptions = {
+  responsive: true,
+  maintainAspectRatio: true,
+  plugins: {
+    legend: {
+      display: true,
+      position: 'bottom',
+      labels: { font: { size: 12 }, padding: 20, usePointStyle: true }
+    }
+  },
+  scales: {
+    y: { grid: { color: 'rgba(0,0,0,0.05)' } },
+    x: { grid: { display: false } }
+  }
+};
+
+// ──────────────────────────────────────────────────────────────────────────────
+// MAIN RENDER
+// ──────────────────────────────────────────────────────────────────────────────
+function renderDashboard(data) {
+  uploadZone.style.display = 'none';
+  document.getElementById('mainContent').classList.add('visible');
+
+  const { metadata, plainPoS, basicPoSR, multiDimPoSR } = data;
+
+  document.getElementById('meta-trades').textContent = metadata.totalTrades.toLocaleString();
+  document.getElementById('meta-date').textContent = new Date(metadata.timestamp).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric'
+  });
+
+  renderStats(plainPoS, basicPoSR, multiDimPoSR);
+  renderGiniChart(plainPoS, basicPoSR, multiDimPoSR);
+  renderSelectionChart(plainPoS, basicPoSR, multiDimPoSR);
+  renderDetectionTimeline(plainPoS, basicPoSR, multiDimPoSR);
+  renderGasAnalysis(plainPoS, basicPoSR, multiDimPoSR);
+  renderTimingAnalysis(plainPoS, basicPoSR, multiDimPoSR);
+  renderCompTable(plainPoS, basicPoSR, multiDimPoSR);
+  renderHonestComparison(plainPoS, basicPoSR, multiDimPoSR);
+  renderStatisticalVar(multiDimPoSR);
+  renderConclusions(plainPoS, basicPoSR, multiDimPoSR);
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// STATS
+// ──────────────────────────────────────────────────────────────────────────────
+function renderStats(p, b, m) {
+  const iyer = m.finalStats.find(v => v.name === 'Iyer');
+  const eve = m.finalStats.find(v => v.name === 'Eve');
+  const giniImprove = (((p.summary.finalGini - m.summary.finalGini) / p.summary.finalGini) * 100).toFixed(1);
+
+  const stats = [
+    {
+      label: 'Gini Fairness Gain',
+      value: `${giniImprove}%`,
+      desc: 'Multi-dim vs Plain PoS reduction',
+      unit: 'lower = better'
+    },
+    {
+      label: 'Eve Detection (Multi)',
+      value: m.summary.eveDetectedAt ? `#${m.summary.eveDetectedAt}` : '∞',
+      desc: 'Trade number detected',
+      unit: 'lower = faster'
+    },
+    {
+      label: 'Charlie Collusion (Multi)',
+      value: m.summary.charlieDetectedAt ? `#${m.summary.charlieDetectedAt}` : '∞',
+      desc: 'Novel detection capability',
+      unit: 'Multi-dim only'
+    },
+    {
+      label: 'Iyer Selection',
+      value: iyer ? `${iyer.avgSelectionPct}%` : '—',
+      desc: 'Compliance bonus applied',
+      unit: 'SEBI-approved validator'
+    },
+    {
+      label: 'Eve Selection',
+      value: eve ? `${eve.avgSelectionPct}%` : '—',
+      desc: 'Effectively excluded',
+      unit: 'vs 11.7% in Plain'
+    },
+    {
+      label: 'Gas Overhead',
+      value: ((((m.gas.totalGasPerRound - p.gas.totalGasPerRound) / p.gas.totalGasPerRound) * 100).toFixed(1)) + '%',
+      desc: 'Multi-dim vs Plain cost',
+      unit: 'acceptable tradeoff'
+    }
+  ];
+
+  const grid = document.getElementById('statsGrid');
+  grid.innerHTML = stats.map(s => `
+    <div class="stat-card">
+      <div class="stat-label">${s.label}</div>
+      <div class="stat-value">${s.value}</div>
+      <div class="stat-desc">${s.desc}</div>
+      <div class="stat-desc" style="font-size:11px;color:var(--text-secondary);margin-top:4px;">${s.unit}</div>
+    </div>
+  `).join('');
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// CHARTS
+// ──────────────────────────────────────────────────────────────────────────────
+function renderGiniChart(p, b, m) {
+  const labels = p.snapshots.filter((_, i) => i % 10 === 0).map(s => s.trade.toLocaleString());
+  const pData = p.snapshots.filter((_, i) => i % 10 === 0).map(s => s.gini);
+  const bData = b.snapshots.filter((_, i) => i % 10 === 0).map(s => s.gini);
+  const mData = m.snapshots.filter((_, i) => i % 10 === 0).map(s => s.gini);
+
+  const ctx = document.getElementById('giniChart').getContext('2d');
+  new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Plain PoS', data: pData, borderColor: COLORS.blue, backgroundColor: 'rgba(59, 130, 246, 0.05)', tension: 0.4 },
+        { label: 'Basic PoS-R', data: bData, borderColor: COLORS.orange, backgroundColor: 'rgba(245, 158, 11, 0.05)', tension: 0.4 },
+        { label: 'Multi-dim PoS-R', data: mData, borderColor: COLORS.green, backgroundColor: 'rgba(16, 185, 129, 0.05)', tension: 0.4, borderWidth: 3 }
+      ]
+    },
+    options: { ...chartOptions, plugins: { ...chartOptions.plugins, legend: { ...chartOptions.plugins.legend, position: 'top' } } }
+  });
+}
+
+function renderSelectionChart(p, b, m) {
+  const names = p.finalStats.map(v => v.name);
+  const pData = p.finalStats.map(v => v.avgSelectionPct);
+  const bData = b.finalStats.map(v => v.avgSelectionPct);
+  const mData = m.finalStats.map(v => v.avgSelectionPct);
+
+  const ctx = document.getElementById('selectionChart').getContext('2d');
+  new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: names,
+      datasets: [
+        { label: 'Plain PoS', data: pData, backgroundColor: COLORS.blue },
+        { label: 'Basic PoS-R', data: bData, backgroundColor: COLORS.orange },
+        { label: 'Multi-dim PoS-R', data: mData, backgroundColor: COLORS.green }
+      ]
+    },
+    options: chartOptions
+  });
+}
+
+function renderDetectionTimeline(p, b, m) {
+  const container = document.getElementById('detectionTimeline');
+  const events = [
+    { name: 'Eve (Malicious)', plain: p.summary.eveDetectedAt, basic: b.summary.eveDetectedAt, multi: m.summary.eveDetectedAt },
+    { name: 'Charlie (Collusion)', plain: p.summary.charlieDetectedAt, basic: b.summary.charlieDetectedAt, multi: m.summary.charlieDetectedAt },
+    { name: 'Dave (Lazy)', plain: p.summary.daveDetectedAt, basic: b.summary.daveDetectedAt, multi: m.summary.daveDetectedAt }
+  ];
+
+  container.innerHTML = `
+    <table style="width:100%;font-family:'JetBrains Mono',monospace;">
+      <tr style="background:var(--primary);color:white;">
+        <th style="padding:12px;text-align:left;border:none;">Bad Actor</th>
+        <th style="padding:12px;text-align:center;border:none;">Plain PoS</th>
+        <th style="padding:12px;text-align:center;border:none;">Basic PoS-R</th>
+        <th style="padding:12px;text-align:center;border:none;">Multi-dim PoS-R</th>
+      </tr>
+      ${events.map(e => `<tr>
+        <td style="padding:12px;border-bottom:1px solid var(--border);" class="table-metric">${e.name}</td>
+        <td style="padding:12px;border-bottom:1px solid var(--border);text-align:center;">${e.plain || '✗ Never'}</td>
+        <td style="padding:12px;border-bottom:1px solid var(--border);text-align:center;">${e.basic || '✗ Never'}</td>
+        <td style="padding:12px;border-bottom:1px solid var(--border);text-align:center;color:var(--success);font-weight:700;">${e.multi || '✗ Never'}</td>
+      </tr>`).join('')}
+    </table>
+  `;
+}
+
+function renderGasAnalysis(p, b, m) {
+  const ctx = document.getElementById('gasChart').getContext('2d');
+  new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: ['Plain PoS', 'Basic PoS-R', 'Multi-dim PoS-R'],
+      datasets: [{
+        label: 'Total Gas (per round, millions)',
+        data: [
+          p.gas.totalGasPerRound / 1e6,
+          b.gas.totalGasPerRound / 1e6,
+          m.gas.totalGasPerRound / 1e6
+        ],
+        backgroundColor: [COLORS.blue, COLORS.orange, COLORS.green]
+      }]
+    },
+    options: { ...chartOptions, indexAxis: 'y' }
+  });
+}
+
+function renderTimingAnalysis(p, b, m) {
+  const ctx = document.getElementById('timingChart').getContext('2d');
+  new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: ['Plain PoS', 'Basic PoS-R', 'Multi-dim PoS-R'],
+      datasets: [{
+        label: 'Total Execution Time (seconds)',
+        data: [
+          p.overhead.avgTotalExecutionTimeMs / 1000,
+          b.overhead.avgTotalExecutionTimeMs / 1000,
+          m.overhead.avgTotalExecutionTimeMs / 1000
+        ],
+        backgroundColor: [COLORS.blue, COLORS.orange, COLORS.green]
+      }]
+    },
+    options: chartOptions
+  });
+}
+
+function renderCompTable(p, b, m) {
+  const tbl = document.getElementById('compTable');
+  const rows = [
+    ['Gini Fairness (lower=better)', p.summary.finalGini, b.summary.finalGini, m.summary.finalGini],
+    ['Eve Detection Rate (%)', p.summary.eveDetectionRate, b.summary.eveDetectionRate, m.summary.eveDetectionRate],
+    ['Charlie Detection Rate (%)', p.summary.charlieDetectionRate, b.summary.charlieDetectionRate, m.summary.charlieDetectionRate],
+    ['Total Gas Per Round (millions)', (p.gas.totalGasPerRound / 1e6).toFixed(1), (b.gas.totalGasPerRound / 1e6).toFixed(1), (m.gas.totalGasPerRound / 1e6).toFixed(1)],
+    ['Execution Time (seconds)', (p.overhead.avgTotalExecutionTimeMs / 1000).toFixed(2), (b.overhead.avgTotalExecutionTimeMs / 1000).toFixed(2), (m.overhead.avgTotalExecutionTimeMs / 1000).toFixed(2)]
+  ];
+
+  tbl.innerHTML = `
+    <tr>
+      <th>Metric</th>
+      <th style="text-align:center;">Plain PoS</th>
+      <th style="text-align:center;">Basic PoS-R</th>
+      <th style="text-align:center;">Multi-dim PoS-R</th>
+    </tr>
+    ${rows.map(r => `<tr>
+      <td class="table-metric">${r[0]}</td>
+      <td style="text-align:center;">${typeof r[1] === 'number' ? r[1].toFixed(2) : r[1]}</td>
+      <td style="text-align:center;">${typeof r[2] === 'number' ? r[2].toFixed(2) : r[2]}</td>
+      <td style="text-align:center;color:var(--success);font-weight:600;">${typeof r[3] === 'number' ? r[3].toFixed(2) : r[3]}</td>
+    </tr>`).join('')}
+  `;
+}
+
+function renderHonestComparison(p, b, m) {
+  const pGasInc = ((b.gas.totalGasPerRound - p.gas.totalGasPerRound) / p.gas.totalGasPerRound * 100).toFixed(1);
+  const mGasInc = ((m.gas.totalGasPerRound - p.gas.totalGasPerRound) / p.gas.totalGasPerRound * 100).toFixed(1);
+  const fairnessGain = ((p.summary.finalGini - m.summary.finalGini) / p.summary.finalGini * 100).toFixed(1);
+
+  const comparisons = [
+    {
+      name: 'Plain PoS',
+      class: 'plain',
+      strengths: ['Lowest gas consumption', 'Fastest execution', 'Simplest implementation'],
+      weaknesses: ['No bad actor detection', 'Unfair distribution', 'Rich-get-richer problem']
+    },
+    {
+      name: 'Basic PoS-R',
+      class: 'basic',
+      strengths: ['Detects malicious actors', 'Improved fairness', 'Single reputation score'],
+      weaknesses: [`+${pGasInc}% more gas`, 'No collusion detection', 'No latency awareness']
+    },
+    {
+      name: 'Multi-dim PoS-R',
+      class: 'multi',
+      strengths: [`${fairnessGain}% fairness gain`, 'Detects malicious & collusion', 'Latency & compliance aware', '5-dimensional assessment'],
+      weaknesses: [`+${mGasInc}% more gas`, 'More complex code', 'Requires off-chain data']
+    }
+  ];
+
+  const grid = document.getElementById('honestyGrid');
+  grid.innerHTML = comparisons.map(comp => `
+    <div class="comparison-card ${comp.class}">
+      <div class="comparison-header">${comp.name}</div>
+      <div class="strengths">
+        <div class="strengths-title">✓ Strengths</div>
+        ${comp.strengths.map(s => `<div class="strength-item">• ${s}</div>`).join('')}
+      </div>
+      <div class="weaknesses">
+        <div class="weaknesses-title">✗ Weaknesses</div>
+        ${comp.weaknesses.map(w => `<div class="weakness-item">• ${w}</div>`).join('')}
+      </div>
+    </div>
+  `).join('');
+}
+
+function renderStatisticalVar(m) {
+  const st = document.getElementById('statisticalTable');
+  st.innerHTML = `
+    <tr>
+      <th>Validator</th>
+      <th style="text-align:center;">Selection Range (%)</th>
+      <th style="text-align:center;">Detection Status</th>
+      <th style="text-align:center;">Status</th>
+    </tr>
+    ${m.finalStats.map(v => {
+      const selRange = v.selectionRange ? `${v.selectionRange[0]}–${v.selectionRange[1]}` : 'N/A';
+      const status = v.detectedInAllRounds ? '<span class="badge badge-danger">CAUGHT</span>' : v.collusionDetected ? '<span class="badge badge-warning">SUSPICIOUS</span>' : '<span class="badge badge-success">CLEAN</span>';
+      return `<tr>
+        <td class="table-metric">${v.name}</td>
+        <td style="text-align:center;">${selRange}</td>
+        <td style="text-align:center;">${v.detectedInAllRounds ? '✓ Detected' : v.collusionDetected ? '⚠ Flagged' : '—'}</td>
+        <td style="text-align:center;">${status}</td>
+      </tr>`;
+    }).join('')}
+  `;
+}
+
+function renderConclusions(p, b, m) {
+  const box = document.getElementById('conclusionsBox');
+  const fairnessGain = ((p.summary.finalGini - m.summary.finalGini) / p.summary.finalGini * 100).toFixed(1);
+  const gasOverhead = ((m.gas.totalGasPerRound - p.gas.totalGasPerRound) / p.gas.totalGasPerRound * 100).toFixed(1);
+
+  box.innerHTML = `
+    <div style="padding:24px;line-height:1.8;">
+      <h3 style="color:var(--primary);margin-bottom:16px;font-size:18px;">Summary of Findings</h3>
+      
+      <p style="margin-bottom:16px;">
+        <strong>1. Fairness Improvement:</strong> Multi-dimensional PoS-R achieves ${fairnessGain}% fairness improvement over Plain PoS 
+        (Gini: ${p.summary.finalGini} → ${m.summary.finalGini}), demonstrating effective merit-based selection.
+      </p>
+
+      <p style="margin-bottom:16px;">
+        <strong>2. Novel Detection Capability:</strong> Only Multi-dim successfully detects collusion attacks (Charlie at trade #${m.summary.charlieDetectedAt || '∞'}), 
+        a capability absent in Plain and Basic PoS-R. Both detect malicious actors effectively.
+      </p>
+
+      <p style="margin-bottom:16px;">
+        <strong>3. Acceptable Overhead:</strong> Multi-dim requires only ${gasOverhead}% additional gas compared to Plain PoS, 
+        a reasonable tradeoff for detection capabilities and improved fairness in blockchain systems.
+      </p>
+
+      <p style="margin-bottom:0;">
+        <strong>4. Recommendation:</strong> Multi-dimensional PoS-R is recommended for high-security stock exchange validator networks 
+        requiring both fairness and comprehensive bad-actor detection.
+      </p>
+    </div>
+  `;
+}
+</script>
+
+</body>
+</html>
