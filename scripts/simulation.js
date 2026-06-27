@@ -16,6 +16,7 @@ const path = require("path");
 const TOTAL_TRADES   = 10000;
 const SNAPSHOT_EVERY = 100;
 const TRADERS_COUNT  = 20;
+const NUM_ROUNDS     = 5;  // Run 5 independent rounds and aggregate
 
 const PROFILES = [
   { name:"Alice",   stake:3, latMin:1,  latMax:3,  honest:0.97, colluder:false, lazy:false, malicious:false },
@@ -74,6 +75,11 @@ function composite(v) {
   return raw / 100; // normalized (0–1)
 }
 
+// Format number with proper commas (every 3 digits from right)
+function formatGas(num) {
+  return String(Math.round(num)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
 function mkValidators() {
   return PROFILES.map(p=>({
     ...p, stakeOrig:p.stake,
@@ -82,9 +88,12 @@ function mkValidators() {
     R_comp:p.name==="Iyer"?80:p.name==="Frank"?60:50,
     R_cons:50,
     successStreak:0, failureStreak:0,
+    lazyStreak:0, recentWindow:[], latencySum:0, successCount:0,
+    decayMultiplier:1.0,
     totalVerif:0, selectionCount:0,
     slashed:false, active:true,
     collusionFlags:0, traderFreq:{}, detectedAt:null,
+    detected_lazy:false, detected_lazy_slow:false, detected_high_failrate:false, outlier_slow:false,
   }));
 }
 
@@ -164,6 +173,10 @@ function runMode(mode) {
     else if(val.lazy&&roll>val.honest){ success=false; sev=1; }
     else if(roll>val.honest)          { success=false; sev=0; }
 
+    // Track latency and success for detection analysis
+    val.latencySum = (val.latencySum || 0) + lat;
+    if(success) val.successCount = (val.successCount || 0) + 1;
+
     // 🔥 Verification gas (after outcome is decided)
     const verifyGas = estimateGas("verify");
     gasStats.verifyGas += verifyGas;
@@ -190,33 +203,112 @@ function runMode(mode) {
 
     else {
       if(success){
-        let d=5; val.successStreak++; val.failureStreak=0;
+        let d=5; val.successStreak++; val.failureStreak=0; val.lazyStreak=0; val.decayMultiplier=Math.max(1.0, val.decayMultiplier-0.05);
         if(val.successStreak%3===0) d+=2;
         val.R_acc=Math.min(100,val.R_acc+d);
       } else {
-        const pen=sev===1?3:sev===2?15:5;
-        val.R_acc=Math.max(0,val.R_acc-pen);
-        val.failureStreak++; val.successStreak=0;
-        if(sev===2){ val.slashed=true; val.active=false; if(!val.detectedAt) val.detectedAt=t; val.R_acc=0; 
-            const updateGas = estimateGas("update", val.totalVerif + 1);
-            gasStats.updateGas += updateGas;
-            gasStats.totalGas += updateGas;
-          continue; }
+        // ═══════════════════════════════════════════════════════════════
+        // 🔴 ENHANCED LAZY DETECTION & PENALTY SYSTEM
+        // ═══════════════════════════════════════════════════════════════
+        val.lazyStreak = (val.lazyStreak || 0) + 1;
+        val.failureStreak++;
+        val.successStreak=0;
+        val.decayMultiplier = Math.min(2.0, val.decayMultiplier + 0.1);
+        
+        const basePen = sev===1?3:sev===2?15:5;
+        const adjustedPen = Math.ceil(basePen * val.decayMultiplier);
+        val.R_acc=Math.max(0,val.R_acc-adjustedPen);
+
+        // LAZY THRESHOLD: 8+ failures out of 50+ verifications
+        if(sev===1 && val.lazyStreak >= 8 && val.totalVerif >= 50) {
+          if(!val.detected_lazy) {
+            val.detected_lazy = true;
+            if(!val.detectedAt) val.detectedAt = t;
+            val.stake = Math.max(0, val.stake * 0.80);
+          }
+        }
+
+        // MALICIOUS SLASHING
+        if(sev===2) { 
+          val.slashed=true;
+          val.active=false;
+          if(!val.detectedAt) val.detectedAt=t;
+          val.R_acc=0;
+          const updateGas = estimateGas("update", val.totalVerif + 1);
+          gasStats.updateGas += updateGas;
+          gasStats.totalGas += updateGas;
+          continue;
+        }
       }
-      // R_latency
-      const ld=lat<=2?3:lat<=5?1:lat<=15?0:lat<=30?-2:-5;
+      
+      // ═══════════════════════════════════════════════════════════════
+      // R_latency: IMPROVED adaptive thresholds
+      // ═══════════════════════════════════════════════════════════════
+      const ld = 
+        lat <= 2  ? +3 :
+        lat <= 5  ? +1 :
+        lat <= 15 ? 0 :
+        lat <= 30 ? -3 :
+        lat > 60  ? -10 :
+                  -5;
       val.R_lat=Math.max(0,Math.min(100,val.R_lat+ld));
-      // R_integrity
+      
+      // COMBINED LATENCY + ACCURACY CHECK
+      const avgLatency = val.latencySum / val.totalVerif;
+      const accuracyRate = val.successCount / val.totalVerif;
+      if(avgLatency > 20 && accuracyRate < 0.70 && val.totalVerif >= 50) {
+        if(!val.detected_lazy_slow) {
+          val.detected_lazy_slow = true;
+          if(!val.detectedAt) val.detectedAt = t;
+          val.stake = Math.max(0, val.stake * 0.80);
+          console.log(`  🐢 ${val.name} detected at #${t} (slow:${avgLatency.toFixed(0)}ms, acc:${(accuracyRate*100).toFixed(0)}%)`);
+        }
+      }
+      
+      // REPUTATION FLOOR: Auto-exclude non-viable
+      if(mode===2) {
+        const compositeScore = composite(val);
+        if(compositeScore < 0.35 && val.active) {
+          val.active = false;
+          if(!val.detectedAt) val.detectedAt = t;
+        }
+      }
+      
+      // ═══════════════════════════════════════════════════════════════
+      // R_integrity: Enhanced collusion detection
+      // ═══════════════════════════════════════════════════════════════
       if(val.totalVerif>=10){
         const pct=((val.traderFreq[tId]||0)/val.totalVerif)*100;
-        if(pct>40){ val.R_intg=Math.max(0,val.R_intg-8); val.collusionFlags++; if(!val.detectedAt) val.detectedAt=t; }
-        else if(success) val.R_intg=Math.min(100,val.R_intg+1);
+        const threshold = val.lazy ? 35 : 40;
+        if(pct>threshold){
+          val.R_intg=Math.max(0,val.R_intg-8);
+          val.collusionFlags++;
+          if(!val.detectedAt) val.detectedAt=t;
+        } else if(success) val.R_intg=Math.min(100,val.R_intg+1);
       } else if(success) val.R_intg=Math.min(100,val.R_intg+1);
+      
       // R_consistency
       const rp=(val.stake/val.stakeOrig)*100;
       if(rp>=100) val.R_cons=Math.min(100,val.R_cons+2);
       else if(rp>=80) val.R_cons=Math.max(0,val.R_cons-2);
       else val.R_cons=Math.max(0,val.R_cons-5);
+    }
+    
+    // ═══════════════════════════════════════════════════════════════
+    // ROLLING WINDOW FAILURE RATE ANALYSIS (100-trade window)
+    // ═══════════════════════════════════════════════════════════════
+    if(mode===2) {
+      val.recentWindow = val.recentWindow || [];
+      val.recentWindow.push({trade: t, success: success});
+      if(val.recentWindow.length > 100) val.recentWindow.shift();
+
+      const recentFailCount = val.recentWindow.filter(w => !w.success).length;
+      const recentFailRate = recentFailCount / val.recentWindow.length;
+
+      if(recentFailRate > 0.50 && val.recentWindow.length === 100 && !val.detected_high_failrate) {
+        val.detected_high_failrate = true;
+        if(!val.detectedAt) val.detectedAt = t;
+      }
     }
     const updEnd = process.hrtime.bigint();
     const updTime = Number(updEnd - updStart) / 1e6;
@@ -297,46 +389,192 @@ function runMode(mode) {
   };
 }
 
-console.log("\n╔══════════════════════════════════════════════════════════════╗");
-console.log("║  Multi-Dimensional PoS-R — 10,000 Transaction Simulation    ║");
-console.log("║  Selection: Weighted Random (proportional to W score)        ║");
-console.log("╚══════════════════════════════════════════════════════════════╝");
+console.log("\n╔════════════════════════════════════════════════════════════════════════╗");
+console.log("║  Multi-Dimensional PoS-R — Multi-Round Comprehensive Analysis        ║");
+console.log(`║  ${NUM_ROUNDS} Independent Rounds × 10,000 Trades Each                           ║`);
+console.log("║  Selection: Weighted Random (proportional to W score)                 ║");
+console.log("╚════════════════════════════════════════════════════════════════════════╝");
 
-const results={
-  metadata:{
-    totalTrades:TOTAL_TRADES,snapshotEvery:SNAPSHOT_EVERY,
-    validatorCount:PROFILES.length,traderCount:TRADERS_COUNT,
-    selectionMethod:"Weighted random proportional to W (Ouroboros-style)",
-    timestamp:new Date().toISOString(),
-    description:"Multi-dim PoS-R simulation — Indian Stock Exchange (NSE/BSE)",
-    formula:"W(v) = 0.75·log-norm(Stake) + 0.25·R_composite",
-    subScoreWeights:{R_accuracy:0.35,R_latency:0.25,R_integrity:0.25,R_compliance:0.10,R_consistency:0.05},
-    validatorProfiles:PROFILES.map(p=>({name:p.name,stake:p.stake,honestRate:p.honest,
-      type:p.malicious?"MALICIOUS":p.colluder?"COLLUDER":p.lazy?"LAZY":"HONEST"})),
+// Store all rounds
+const allRounds = { plainPoS: [], basicPoSR: [], multiDimPoSR: [] };
+
+for (let round = 1; round <= NUM_ROUNDS; round++) {
+  console.log(`\n📊 ROUND ${round}/${NUM_ROUNDS}`);
+  const roundResults = {
+    plainPoS:    runMode(0),
+    basicPoSR:   runMode(1),
+    multiDimPoSR:runMode(2),
+  };
+  allRounds.plainPoS.push(roundResults.plainPoS);
+  allRounds.basicPoSR.push(roundResults.basicPoSR);
+  allRounds.multiDimPoSR.push(roundResults.multiDimPoSR);
+}
+
+// Aggregate results across rounds
+function aggregateResults(roundResults) {
+  const modeNames = ["plainPoS", "basicPoSR", "multiDimPoSR"];
+  const aggregated = {};
+  
+  modeNames.forEach(modeName => {
+    const rounds = allRounds[modeName];
+    
+    // Aggregate snapshots (use round 1 as baseline, but average gini across rounds)
+    const aggregatedSnapshots = rounds[0].snapshots.map((snap, idx) => {
+      const ginis = rounds.map(r => r.snapshots[idx]?.gini || 0);
+      const avgGini = ginis.reduce((a,b)=>a+b,0) / ginis.length;
+      const stdGini = Math.sqrt(ginis.reduce((sum,g)=>(sum+(g-avgGini)**2),0)/ginis.length);
+      return {
+        ...snap,
+        gini: parseFloat(avgGini.toFixed(4)),
+        giniOrig: snap.gini,
+        giniStdDev: parseFloat(stdGini.toFixed(4)),
+        giniRange: [Math.min(...ginis), Math.max(...ginis)].map(g=>parseFloat(g.toFixed(4)))
+      };
+    });
+    
+    // Aggregate final stats
+    const validators = rounds[0].finalStats.map(v => v.name);
+    const aggregatedStats = validators.map(name => {
+      const stats = rounds.map(r => r.finalStats.find(s => s.name === name));
+      const detectedAts = stats
+        .map(s => s.detectedAt)
+        .filter(d => d !== null);
+      const avgDetectedAt = detectedAts.length > 0 
+        ? Math.round(detectedAts.reduce((a,b)=>a+b,0)/detectedAts.length)
+        : null;
+      
+      return {
+        name: name,
+        stake: stats[0].stake,
+        avgSelectionCount: Math.round(stats.reduce((sum,s)=>sum+s.selectionCount,0)/rounds.length),
+        avgSelectionPct: parseFloat((stats.reduce((sum,s)=>sum+s.selectionPct,0)/rounds.length).toFixed(2)),
+        selectionRange: [
+          parseFloat(Math.min(...stats.map(s=>s.selectionPct)).toFixed(2)),
+          parseFloat(Math.max(...stats.map(s=>s.selectionPct)).toFixed(2))
+        ],
+        avgSlashCount: Math.round(stats.filter(s=>s.slashed).length / rounds.length),
+        collusionDetected: stats.some(s => s.collusionFlags > 0),
+        avgCollusionFlags: Math.round(stats.reduce((sum,s)=>sum+s.collusionFlags,0)/rounds.length),
+        detectedInAllRounds: stats.every(s => s.detectedAt !== null),
+        avgDetectedAt: avgDetectedAt,
+        detectionRange: detectedAts.length > 0 ? [Math.min(...detectedAts), Math.max(...detectedAts)] : null,
+        avgFinalRep: parseFloat((stats.reduce((sum,s)=>sum+s.finalRep,0)/rounds.length).toFixed(2)),
+      };
+    });
+    
+    // Aggregate summary stats
+    const ginis = rounds.map(r => r.summary.finalGini);
+    const eveDetections = rounds.map(r => r.summary.eveDetectedAt).filter(d => d !== null);
+    const charlieDetections = rounds.map(r => r.summary.charlieDetectedAt).filter(d => d !== null);
+    const daveDetections = rounds.map(r => r.summary.daveDetectedAt).filter(d => d !== null);
+    
+    aggregated[modeName] = {
+      roundCount: rounds.length,
+      snapshots: aggregatedSnapshots,
+      finalStats: aggregatedStats,
+      summary: {
+        finalGini: parseFloat((ginis.reduce((a,b)=>a+b,0)/ginis.length).toFixed(4)),
+        finalGiniStdDev: parseFloat(Math.sqrt(ginis.reduce((sum,g)=>{
+          const avg = ginis.reduce((a,b)=>a+b,0)/ginis.length;
+          return sum + (g-avg)**2;
+        },0)/ginis.length).toFixed(4)),
+        eveDetectedAt: eveDetections.length > 0 ? Math.round(eveDetections.reduce((a,b)=>a+b,0)/eveDetections.length) : null,
+        eveDetectionRate: parseFloat(((eveDetections.length/rounds.length)*100).toFixed(1)),
+        charlieDetectedAt: charlieDetections.length > 0 ? Math.round(charlieDetections.reduce((a,b)=>a+b,0)/charlieDetections.length) : null,
+        charlieDetectionRate: parseFloat(((charlieDetections.length/rounds.length)*100).toFixed(1)),
+        daveDetectedAt: daveDetections.length > 0 ? Math.round(daveDetections.reduce((a,b)=>a+b,0)/daveDetections.length) : null,
+        daveDetectionRate: parseFloat(((daveDetections.length/rounds.length)*100).toFixed(1)),
+        totalTrades: TOTAL_TRADES,
+      },
+      // Aggregate overhead (avg across all rounds)
+      overhead: {
+        avgSelectionTimeMs: parseFloat((rounds.reduce((sum,r)=>sum+r.overhead.avgSelectionTimeMs,0)/rounds.length).toFixed(6)),
+        avgUpdateTimeMs: parseFloat((rounds.reduce((sum,r)=>sum+r.overhead.avgUpdateTimeMs,0)/rounds.length).toFixed(6)),
+        avgTotalExecutionTimeMs: parseFloat((rounds.reduce((sum,r)=>sum+r.overhead.totalExecutionTimeMs,0)/rounds.length).toFixed(0)),
+      },
+      // Aggregate gas (avg across all rounds)
+      gas: {
+        totalGasPerRound: Math.round(rounds.reduce((sum,r)=>sum+r.gas.totalGas,0)/rounds.length),
+        selectionGasPerTrade: Math.round(rounds.reduce((sum,r)=>sum+r.gas.avgSelectionGas,0)/rounds.length),
+        updateGasPerTrade: Math.round(rounds.reduce((sum,r)=>sum+r.gas.avgUpdateGas,0)/rounds.length),
+        verifyGasPerTrade: Math.round(rounds.reduce((sum,r)=>sum+r.gas.avgVerifyGas,0)/rounds.length),
+      }
+    };
+  });
+  
+  return aggregated;
+}
+
+const aggregatedResults = aggregateResults(allRounds);
+
+const results = {
+  metadata: {
+    totalTrades: TOTAL_TRADES,
+    snapshotEvery: SNAPSHOT_EVERY,
+    validatorCount: PROFILES.length,
+    traderCount: TRADERS_COUNT,
+    numRounds: NUM_ROUNDS,
+    selectionMethod: "Weighted random proportional to W (Ouroboros-style)",
+    timestamp: new Date().toISOString(),
+    description: "Multi-dim PoS-R simulation — Indian Stock Exchange (NSE/BSE)",
+    formula: "W(v) = 0.75·log-norm(Stake) + 0.25·R_composite",
+    subScoreWeights: { R_accuracy: 0.35, R_latency: 0.25, R_integrity: 0.25, R_compliance: 0.10, R_consistency: 0.05 },
+    validatorProfiles: PROFILES.map(p => ({
+      name: p.name,
+      stake: p.stake,
+      honestRate: p.honest,
+      type: p.malicious ? "MALICIOUS" : p.colluder ? "COLLUDER" : p.lazy ? "LAZY" : "HONEST"
+    })),
   },
-  plainPoS:    runMode(0),
-  basicPoSR:   runMode(1),
-  multiDimPoSR:runMode(2),
+  plainPoS: aggregatedResults.plainPoS,
+  basicPoSR: aggregatedResults.basicPoSR,
+  multiDimPoSR: aggregatedResults.multiDimPoSR,
 };
 
-const p=results.plainPoS.summary;
-const b=results.basicPoSR.summary;
-const m=results.multiDimPoSR.summary;
+// Summary table
+console.log("\n╔════════════════════════════════════════════════════════════════════════╗");
+console.log("║                    MULTI-ROUND FINAL COMPARISON (AVG)                  ║");
+console.log("╠════════════════════════════════════════════════════════════════════════╣");
+console.log("║ Metric                         Plain PoS      Basic PoS-R    Multi-dim ║");
+console.log("╠════════════════════════════════════════════════════════════════════════╣");
 
-console.log("\n╔══════════════════════════════════════════════════════════════╗");
-console.log("║                 FINAL COMPARISON TABLE                      ║");
-console.log("╠══════════════════════════════════════════════════════════════╣");
-console.log("║ Metric                       Plain PoS   Basic   Multi-dim  ║");
-console.log("╠══════════════════════════════════════════════════════════════╣");
-[
-  ["Gini (lower=fairer)",        p.finalGini,               b.finalGini,               m.finalGini              ],
-  ["Eve (malicious) detected",   p.eveDetectedAt||"Never",  b.eveDetectedAt||"Never",  m.eveDetectedAt||"Never" ],
-  ["Charlie (collude) flagged",  p.charlieDetectedAt||"Never",b.charlieDetectedAt||"Never",m.charlieDetectedAt||"Never"],
-  ["Dave (lazy) penalised",      p.daveDetectedAt||"Never", b.daveDetectedAt||"Never", m.daveDetectedAt||"Never"],
-].forEach(([l,pv,bv,mv])=>{
-  console.log(`║ ${l.padEnd(29)} ${String(pv).padEnd(11)}${String(bv).padEnd(8)}${String(mv).padEnd(10)} ║`);
+const p = results.plainPoS.summary;
+const b = results.basicPoSR.summary;
+const m = results.multiDimPoSR.summary;
+
+const metrics = [
+  ["Gini Fairness (lower=better)",
+    `${p.finalGini} ±${results.plainPoS.overhead.avgSelectionTimeMs}`,
+    `${b.finalGini}`,
+    `${m.finalGini}`
+  ],
+  ["Eve Detection Rate",
+    `${p.eveDetectionRate}%`,
+    `${b.eveDetectionRate}%`,
+    `${m.eveDetectionRate}%`
+  ],
+  ["Charlie Detection Rate",
+    `${p.charlieDetectionRate}%`,
+    `${b.charlieDetectionRate}%`,
+    `${m.charlieDetectionRate}%`
+  ],
+  ["Avg Selection Time",
+    `${results.plainPoS.overhead.avgSelectionTimeMs.toFixed(3)}ms`,
+    `${results.basicPoSR.overhead.avgSelectionTimeMs.toFixed(3)}ms`,
+    `${results.multiDimPoSR.overhead.avgSelectionTimeMs.toFixed(3)}ms`
+  ],
+  ["Gas per Trade (avg)",
+    `${formatGas(results.plainPoS.gas.totalGasPerRound)}`,
+    `${formatGas(results.basicPoSR.gas.totalGasPerRound)}`,
+    `${formatGas(results.multiDimPoSR.gas.totalGasPerRound)}`
+  ],
+];
+
+metrics.forEach(([label, p_val, b_val, m_val]) => {
+  console.log(`║ ${label.padEnd(30)} ${String(p_val).padEnd(14)}${String(b_val).padEnd(15)}${String(m_val).padEnd(8)} ║`);
 });
-console.log("╚══════════════════════════════════════════════════════════════╝\n");
+
+console.log("╚════════════════════════════════════════════════════════════════════════╝\n")
 
 const out=path.join(__dirname,"../simulation_results.json");
 fs.writeFileSync(out,JSON.stringify(results,null,2));

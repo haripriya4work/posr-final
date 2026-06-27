@@ -8,7 +8,10 @@
     "deploy":     "hardhat run scripts/deploy.js --network localhost",
     "simulate":   "node scripts/simulation.js",
     "analyse":    "node scripts/analysis.js",
-    "test":       "hardhat test"
+    "test":       "hardhat test",
+    "ci":         "npx hardhat compile && npx hardhat test && cd frontend && npm ci && npm run build",
+    "run_all":    "bash scripts/run_all.sh",
+    "start:frontend": "cd frontend && npm run dev"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^4.0.0",
